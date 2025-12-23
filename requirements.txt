@@ -1,0 +1,13 @@
+streamlit
+pandas
+plotly
+sqlalchemy
+openpyxl
+lxml
+google-auth-oauthlib
+msal
+streamlit-lottie
+pypdf
+python-pptx
+bcrypt
+python-docx
