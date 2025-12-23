@@ -5,8 +5,8 @@ This project helps security teams and analysts upload scan results, analyze vuln
 
 **✨ Features**
 
-**📂 Project-based analysis
-**
+**📂 Project-based analysis**
+
 View all scan projects in one place
 
 Click a project to see full analytics
@@ -50,8 +50,7 @@ Pandas
 Plotting libraries (used for charts & analytics)
 
 
-**
-🧭 How It Works**
+**🧭 How It Works**
 
 Launch the app
 
