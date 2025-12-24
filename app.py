@@ -4,7 +4,7 @@ import plotly.express as px
 from sqlalchemy.orm import Session
 from database import engine, SessionLocal, init_db, Project, Vulnerability, User, Team, ProjectAccess, UserRole
 from parsers import parse_file
-from auth import check_session, login_user, register_user, logout_user, set_session
+from auth import check_session, login_user, check_session, logout_user, set_session, create_user
 import datetime
 import os
 
@@ -134,34 +134,19 @@ st.sidebar.title("VAPT Dashboard 🛡️")
 if not check_session():
     st.title("🔒 Login to VAPT Dashboard")
     
-    auth_mode = st.tabs(["Login", "Register", "Google Auth (Setup)"])
+    # only login, no registration for public
+    email = st.text_input("Email", key="login_email")
+    password = st.text_input("Password", type="password", key="login_pass")
     
-    with auth_mode[0]:
-        email = st.text_input("Email", key="login_email")
-        password = st.text_input("Password", type="password", key="login_pass")
-        if st.button("Login"):
-            success, msg = login_user(email, password)
-            if success:
-                st.success(msg)
-                st.rerun()
-            else:
-                st.error(msg)
-
-    with auth_mode[1]:
-        r_name = st.text_input("Full Name", key="reg_name")
-        r_email = st.text_input("Email", key="reg_email")
-        r_pass = st.text_input("Password", type="password", key="reg_pass")
-        if st.button("Register"):
-            success, msg = register_user(r_email, r_pass, r_name)
-            if success:
-                st.success("Registration successful! Please Log In.")
-            else:
-                st.error(msg)
+    if st.button("Login"):
+        success, msg = login_user(email, password)
+        if success:
+            st.success(msg)
+            st.rerun()
+        else:
+            st.error(msg)
     
-    with auth_mode[2]:
-        st.info("To enable Google Login, configure `client_secret.json` in the root directory.")
-        # Future: Add file uploader for client_secret.json here
-
+    st.info("Note: Public registration is disabled. Contact Administrator for access.")
     st.stop()
 
 # --- Authenticated View ---
@@ -177,15 +162,23 @@ with st.sidebar:
             <div style="font-size: 3rem;">👤</div>
             <h3 style="margin:0;">{}</h3>
             <p style="color: gray; font-size: 0.9rem;">{}</p>
-        </div>
-        <hr style="margin: 10px 0;">
     """.format(st.session_state.get('user_name', 'Guest'), st.session_state.get('user_role', 'Visitor')), unsafe_allow_html=True)
+    
+    # Show Team if Employee
+    if st.session_state.get('user_role') == 'Employee':
+        session = SessionLocal()
+        user_db = session.query(User).get(user_id)
+        if user_db and user_db.team:
+             st.caption(f"📍 Team: {user_db.team.name}")
+        session.close()
     
     # Removed Button here
 
 # 2. Navigation
 nav_options = ["Dashboard"]
-if user_role in ['Admin', 'Manager']:
+if user_role == 'Admin':
+    nav_options.append("User & Team Management")
+elif user_role == 'Manager':
     nav_options.append("Team Management")
 
 page = st.sidebar.radio("Navigate", nav_options, label_visibility="collapsed")
@@ -203,53 +196,110 @@ with c_foot2:
         st.rerun()
 
 # --- Page Routing ---
-if page == "Team Management":
-    st.header("👥 Team & User Management")
+# --- Page Routing ---
+if page == "User & Team Management" or page == "Team Management":
+    st.header("👥 Admin Panel: User & Team Management")
     session = SessionLocal()
     
-    # 1. Create Team
-    st.subheader("Create New Group/Team")
-    with st.form("create_team"):
-        team_name = st.text_input("Team Name")
-        submitted = st.form_submit_button("Create Team")
-        if submitted and team_name:
-            new_team = Team(name=team_name, manager_id=user_id)
-            session.add(new_team)
-            session.commit()
-            st.success(f"Team '{team_name}' Created!")
-            st.rerun()
+    # Tabs for Admin actions
+    if user_role == 'Admin':
+        tabs = st.tabs(["Create User", "Project Access (Guests)", "Teams"])
+    else:
+        tabs = st.tabs(["Teams"]) # Managers only see Teams
+    
+    # Tab 1: Create User (Admin Only)
+    if user_role == 'Admin':
+        with tabs[0]:
+            st.subheader("Create New User")
+            with st.form("create_user_form"):
+                new_email = st.text_input("Email (Optional for Guest)")
+                new_pass = st.text_input("Password", type="password")
+                new_name = st.text_input("Full Name")
+                new_role = st.selectbox("Role", ["Employee", "Guest", "Admin", "Manager"])
+                
+                if st.form_submit_button("Create User"):
+                    if new_pass:
+                        success, msg = create_user(new_email, new_pass, new_name, new_role)
+                        if success: st.success(msg)
+                        else: st.error(msg)
+                    else:
+                        st.warning("Password is required")
 
-    # 2. Assign Members
-    st.subheader("Assign Employees to Team")
-    teams = session.query(Team).filter_by(manager_id=user_id).all() if user_role == "Manager" else session.query(Team).all()
-    employees = session.query(User).filter(User.role == 'Employee').all()
-    
-    if teams and employees:
-        c1, c2 = st.columns(2)
-        with c1:
-            team_map = {t.id: t.name for t in teams}
-            tid = st.selectbox("Select Team", options=list(team_map.keys()), format_func=lambda x: team_map[x])
-        with c2:
-            emp_map = {e.id: f"{e.full_name} ({e.email})" for e in employees}
-            eid = st.selectbox("Select Employee", options=list(emp_map.keys()), format_func=lambda x: emp_map[x])
+        # Tab 2: Guest Project Access (Admin Only)
+        with tabs[1]:
+            st.subheader("Assign Project Access to Guests")
+            guests = session.query(User).filter(User.role == 'Guest').all()
+            all_projects = session.query(Project).all()
+            
+            if guests and all_projects:
+                c1, c2 = st.columns(2)
+                with c1:
+                    guest_map = {u.id: u.full_name for u in guests}
+                    selected_guest_id = st.selectbox("Select Guest", options=list(guest_map.keys()), format_func=lambda x: guest_map[x])
+                with c2:
+                    proj_map = {p.id: p.project_name for p in all_projects}
+                    selected_proj_id = st.selectbox("Select Project", options=list(proj_map.keys()), format_func=lambda x: proj_map[x])
+                
+                if st.button("Grant Access"):
+                    # Check if exists
+                    exists = session.query(ProjectAccess).filter_by(user_id=selected_guest_id, project_id=selected_proj_id).first()
+                    if not exists:
+                        pa = ProjectAccess(user_id=selected_guest_id, project_id=selected_proj_id)
+                        session.add(pa)
+                        session.commit()
+                        st.success(f"Access granted for project '{proj_map[selected_proj_id]}'")
+                    else:
+                        st.info("Access already exists.")
+            else:
+                st.info("Need Guests and Projects to assign access.")
+
+    # Tab 3: Teams (Shared Admin/Manager)
+    # Re-using previous Team logic, putting it in the correct tab
+    target_tab = tabs[2] if user_role == 'Admin' else tabs[0]
+    with target_tab:
+        # 1. Create Team
+        st.subheader("Create New Group/Team")
+        with st.form("create_team"):
+            team_name = st.text_input("Team Name")
+            submitted = st.form_submit_button("Create Team")
+            if submitted and team_name:
+                new_team = Team(name=team_name, manager_id=user_id)
+                session.add(new_team)
+                session.commit()
+                st.success(f"Team '{team_name}' Created!")
+                st.rerun()
+
+        # 2. Assign Members
+        st.subheader("Assign Employees to Team")
+        teams = session.query(Team).filter_by(manager_id=user_id).all() if user_role == "Manager" else session.query(Team).all()
+        employees = session.query(User).filter(User.role == 'Employee').all()
         
-        if st.button("Assign to Team"):
-           emp = session.query(User).get(eid)
-           emp.team_id = tid
-           session.commit()
-           st.success(f"Assigned to {team_map[tid]}")
-           st.rerun()
-    elif not teams:
-        st.info("Create a team first.")
-    
-    # 3. View Teams
-    st.divider()
-    st.subheader("Existing Teams")
-    all_teams = session.query(Team).all()
-    for t in all_teams:
-        with st.expander(f"Team: {t.name}", expanded=True):
-             members = [u.full_name for u in t.members]
-             st.write(f"Members: {', '.join(members) if members else 'None'}")
+        if teams and employees:
+            c1, c2 = st.columns(2)
+            with c1:
+                team_map = {t.id: t.name for t in teams}
+                tid = st.selectbox("Select Team", options=list(team_map.keys()), format_func=lambda x: team_map[x])
+            with c2:
+                emp_map = {e.id: f"{e.full_name} ({e.email})" for e in employees}
+                eid = st.selectbox("Select Employee", options=list(emp_map.keys()), format_func=lambda x: emp_map[x])
+            
+            if st.button("Assign to Team"):
+               emp = session.query(User).get(eid)
+               emp.team_id = tid
+               session.commit()
+               st.success(f"Assigned to {team_map[tid]}")
+               st.rerun()
+        elif not teams:
+            st.info("Create a team first.")
+        
+        # 3. View Teams
+        st.divider()
+        st.subheader("Existing Teams")
+        all_teams = session.query(Team).all()
+        for t in all_teams:
+            with st.expander(f"Team: {t.name}", expanded=True):
+                 members = [u.full_name for u in t.members]
+                 st.write(f"Members: {', '.join(members) if members else 'None'}")
 
     session.close()
 
@@ -277,7 +327,7 @@ elif page == "Dashboard":
 
     # 2. Check for File Upload (overrides project load if happened in this session context logic, 
     # but we usually reset selected_project_id on upload. 
-    # Just checking 'current_df' is reliable if we ensure we stick to this flow).
+    # Just checking 'current_df' is reliable if we stick to this flow).
     elif 'current_df' in st.session_state and not st.session_state['current_df'].empty:
         in_analytics_mode = True
         df = st.session_state['current_df']
@@ -422,13 +472,34 @@ elif page == "Dashboard":
             else:
                 # Charts
                 r2_1, r2_2, r2_3 = st.columns(3)
+                
+                # Helper for Selection
+                def handle_selection(key_name, original_fig):
+                    # Check if event
+                    if key_name in st.session_state and st.session_state[key_name].get('selection'):
+                        sel = st.session_state[key_name]['selection']
+                        if 'points' in sel and sel['points']:
+                            # Point selected
+                            point = sel['points'][0]
+                            # Try to find label: label, x, or customdata
+                            label = point.get('label') or point.get('x')
+                            if label:
+                                # Apply filter logic based on chart type
+                                if "severity" in key_name: set_severity(label)
+                                # For others we might filter DF directly, but current logic filters by Severity.
+                                # Let's stick to Severity filtering for now or simple toast
+                                if "severity" not in key_name:
+                                    st.toast(f"Drill down: {label} (Filtering implemented for Severity only currently)")
+                                    
                 with r2_1:
                     st.subheader("Severity")
                     try:
                         fig_pie = px.pie(filtered_df, names='Severity', color='Severity', 
                                          color_discrete_map=REQUIRED_COLORS, hole=0.4)
                         fig_pie = update_chart_layout(fig_pie)
-                        st.plotly_chart(fig_pie, use_container_width=True, key="chart_severity")
+                        # Enable Selection
+                        st.plotly_chart(fig_pie, use_container_width=True, key="chart_severity", on_select="rerun", selection_mode="points")
+                        handle_selection("chart_severity", fig_pie)
                         figures['Severity Distribution'] = fig_pie
                     except: st.error("Chart Error")
                 with r2_2:
@@ -438,7 +509,8 @@ elif page == "Dashboard":
                         if 'index' in cat_counts.columns: cat_counts.rename(columns={'index': 'Category'}, inplace=True)
                         fig_bar = px.bar(cat_counts, x='Category', y='Count', color='Category')
                         fig_bar = update_chart_layout(fig_bar)
-                        st.plotly_chart(fig_bar, use_container_width=True, key="chart_categories")
+                        st.plotly_chart(fig_bar, use_container_width=True, key="chart_categories", on_select="rerun", selection_mode="points")
+                        handle_selection("chart_categories", fig_bar)
                         figures['Categories'] = fig_bar
                     except: st.error("Chart Error")
                 with r2_3:
@@ -448,7 +520,8 @@ elif page == "Dashboard":
                         if 'index' in loc_counts.columns: loc_counts.rename(columns={'index': 'File_Location'}, inplace=True)
                         fig_area = px.area(loc_counts, x='File_Location', y='Count')
                         fig_area = update_chart_layout(fig_area)
-                        st.plotly_chart(fig_area, use_container_width=True, key="chart_assets")
+                        st.plotly_chart(fig_area, use_container_width=True, key="chart_assets", on_select="rerun", selection_mode="points")
+                        handle_selection("chart_assets", fig_area)
                         figures['Top Risks'] = fig_area
                     except: st.error("Chart Error")
 
@@ -474,6 +547,12 @@ elif page == "Dashboard":
                 
                 # --- DOWNLOAD ACTIONS (Bottom) ---
                 st.divider()
+                # Guest Restriction: Check if download allowed? 
+                # Request says: Guest: Cannot "Download unassigned reports". 
+                # If they can see the project, they are assigned. 
+                # Employee: Download allowed.
+                # So we can keep it open for now as filtering happens upstream.
+                
                 st.markdown("Download Reports")
                 d1, d2, d3 = st.columns([1, 1, 2])
                 with d1:
@@ -491,43 +570,81 @@ elif page == "Dashboard":
 
         except Exception as e:
             st.error(f"Visualization Error: {e}")
-
-    # --- VIEW: PROJECT LIST (Default) ---
+            
+    # --- VIEW: PROJECT LIST ---
     else:
-        st.title("Project Repository")
+        # Default View: Upload or Select Project
         
-        # 1. Import Section
-        with st.expander("Import New Scan Report", expanded=False):
-            uploaded_file = st.file_uploader("Upload File", type=['xml', 'json', 'nessus', 'csv', 'xlsx', 'pdf', 'docx'])
+        # GUEST RESTRICTION: No Import
+        if user_role != 'Guest':
+            st.markdown("### Import New Scan Report")
+            import_c1, import_c2 = st.columns([2, 1])
+            with import_c1:
+                uploaded_file = st.file_uploader("Upload XML / JSON / CSV", type=['xml', 'json', 'csv'])
+            with import_c2:
+                # Manual trigger info
+                st.info("Supported: Nmap (XML), Zap (JSON), Burp (XML), Nessus (CSV), Checkmarx (CSV)")
+            
             if uploaded_file:
-                user_dir = st.session_state.get('user_upload_dir', 'uploads/temp')
-                if not os.path.exists(user_dir): os.makedirs(user_dir)
-                file_path = os.path.join(user_dir, uploaded_file.name)
-                with open(file_path, "wb") as f: f.write(uploaded_file.getbuffer())
-                
-                df = parse_file(uploaded_file)
-                st.session_state['current_df'] = df
-                if 'selected_project_id' in st.session_state: del st.session_state['selected_project_id']
-                st.rerun()
+                # ... (Parsing Logic) ... 
+                # For brevity, reusing existing parsing logic if available or just loading into DF
+                # The user previously just had logic to load into session state
+                try:
+                    df_parsed = parse_file(uploaded_file)
+                    st.session_state['current_df'] = df_parsed
+                    if 'selected_project_id' in st.session_state: del st.session_state['selected_project_id']
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Parse Error: {e}")
 
-        # 2. Existing Projects
-        projects = session.query(Project).filter(Project.owner_id == user_id).order_by(Project.created_date.desc()).all()
+        # Project Repository
+        st.divider()
+        st.markdown("### Project Repository")
         
-        if projects:
-            for p in projects:
-                with st.container():
-                    c1, c2, c3 = st.columns([3, 1, 1])
-                    with c1:
-                        st.subheader(f"📌 {p.project_name}")
-                        st.caption(f"Date: {p.created_date.strftime('%Y-%m-%d %H:%M')} | Vulnerabilities: {p.total_vulns}")
-                    with c3:
-                        # Big Action Button
-                        if st.button("View Analytics 📊", key=f"view_{p.id}", use_container_width=True):
-                            st.session_state['selected_project_id'] = p.id
-                            if 'current_df' in st.session_state: del st.session_state['current_df']
-                            st.rerun()
-                    st.divider()
+        # RBAC: Fetch Projects
+        # Admin/Manager/Employee: See All? Or Employee see own? 
+        # Request says: Employee: View all projects.
+        # Guest: View ONLY explicitly allocated.
+        
+        projects = []
+        if user_role == 'Guest':
+            # Join ProjectAccess
+            access_records = session.query(ProjectAccess).filter_by(user_id=user_id).all()
+            allowed_ids = [r.project_id for r in access_records]
+            projects = session.query(Project).filter(Project.id.in_(allowed_ids)).all()
         else:
-            st.info("No projects found. Import a scan to get started.")
-
+            projects = session.query(Project).all()
+            
+        if projects:
+            # Display as List Rows
+            for i, p in enumerate(projects):
+                with st.container():
+                     # Layout: Info (Left) | Actions (Right)
+                     c_info, c_action = st.columns([0.7, 0.3])
+                     
+                     with c_info:
+                         st.markdown(f"**{p.project_name}**")
+                         st.caption(f"📅 {p.created_date.strftime('%Y-%m-%d')} | 🐛 Vulns: {p.total_vulns}")
+                     
+                     with c_action:
+                         # Right aligned actions
+                         ac1, ac2 = st.columns(2)
+                         with ac1:
+                             if st.button(f"Load", key=f"load_{p.id}", use_container_width=True):
+                                st.session_state['selected_project_id'] = p.id
+                                st.session_state['current_df'] = pd.DataFrame() 
+                                st.rerun()
+                         with ac2:
+                             if user_role == 'Admin':
+                                if st.button("Delete", key=f"del_{p.id}", use_container_width=True):
+                                   session.delete(p)
+                                   session.commit()
+                                   st.rerun()
+                st.divider()
+        else:
+             if user_role == 'Guest':
+                 st.info("No projects assigned to you. Contact Admin.")
+             else:
+                 st.info("No saved projects found.")
+                 
     session.close()

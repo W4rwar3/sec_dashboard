@@ -1,19 +1,62 @@
 import streamlit as st
 import bcrypt
+import jwt
+from datetime import datetime, timedelta
 from database import SessionLocal, User, UserRole, init_db
 import os
 
-# Initialize DB if not exists (called here to ensure safe start)
+# Initialize DB if not exists
 init_db()
 
-def check_session():
-    """Verifies if a user is logged in."""
-    return 'user_id' in st.session_state and st.session_state['user_id'] is not None
+# --- JWT Config ---
+SECRET_KEY = "vapt-dashboard-secret-key-change-me" # In prod, use env var
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
-def register_user(email, password, full_name, role="Employee"):
-    """Registers a new user with hashed password."""
+def create_access_token(data: dict):
+    """Generates a JWT token."""
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+def verify_token(token: str):
+    """Decodes and validates a JWT token."""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
+
+def check_session():
+    """Verifies if a valid JWT exists in session."""
+    if 'jwt_token' not in st.session_state:
+        return False
+    
+    payload = verify_token(st.session_state['jwt_token'])
+    if payload:
+        return True
+    else:
+        # Token invalid/expired
+        logout_user()
+        return False
+
+def create_user(email, password, full_name, role="Employee"):
+    import uuid
+    """Creates a new user (Admin only function)."""
     session = SessionLocal()
     try:
+        # Handle Guest Optional Email
+        if role == 'Guest' and not email:
+            # Generate placeholder to satisfy DB unique constraint
+            email = f"guest_{uuid.uuid4().hex[:8]}@local.placeholder"
+        
+        if not email:
+            return False, "Email is required for Non-Guest users"
+            
         existing = session.query(User).filter_by(email=email).first()
         if existing:
             return False, "User already exists"
@@ -30,14 +73,14 @@ def register_user(email, password, full_name, role="Employee"):
         )
         session.add(new_user)
         session.commit()
-        return True, "Registered successfully"
+        return True, "User created successfully"
     except Exception as e:
         return False, str(e)
     finally:
         session.close()
 
 def login_user(email, password):
-    """Authenticates user via Email/Password."""
+    """Authenticates user and issues JWT."""
     session = SessionLocal()
     try:
         user = session.query(User).filter_by(email=email).first()
@@ -45,18 +88,24 @@ def login_user(email, password):
             return False, "Invalid credentials"
         
         if bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
-            set_session(user)
+            # Generate Token
+            access_token = create_access_token(
+                data={"sub": user.email, "role": user.role, "user_id": user.id, "name": user.full_name}
+            )
+            set_session(user, access_token)
             return True, "Login successful"
         return False, "Invalid credentials"
     finally:
         session.close()
 
-def set_session(user):
-    """Sets session state variables."""
+def set_session(user, token):
+    """Sets session state with JWT."""
+    st.session_state['jwt_token'] = token
     st.session_state['user_id'] = user.id
     st.session_state['user_email'] = user.email
     st.session_state['user_name'] = user.full_name
     st.session_state['user_role'] = user.role
+    
     # Create user upload directory
     user_dir = os.path.join("uploads", str(user.id))
     os.makedirs(user_dir, exist_ok=True)
@@ -64,7 +113,7 @@ def set_session(user):
 
 def logout_user():
     """Clears session."""
-    keys = ['user_id', 'user_email', 'user_name', 'user_role', 'user_upload_dir']
+    keys = ['jwt_token', 'user_id', 'user_email', 'user_name', 'user_role', 'user_upload_dir', 'selected_project_id', 'current_df', 'selected_severity']
     for key in keys:
         if key in st.session_state:
             del st.session_state[key]

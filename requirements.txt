@@ -11,3 +11,4 @@ pypdf
 python-pptx
 bcrypt
 python-docx
+PyJWT==2.8.0
