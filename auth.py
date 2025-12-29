@@ -117,3 +117,34 @@ def logout_user():
     for key in keys:
         if key in st.session_state:
             del st.session_state[key]
+
+def delete_user(user_id):
+    """Deletes a user by ID."""
+    session = SessionLocal()
+    try:
+        user = session.query(User).get(user_id)
+        if user:
+            session.delete(user)
+            session.commit()
+            return True, "User deleted successfully"
+        return False, "User not found"
+    except Exception as e:
+        return False, str(e)
+    finally:
+        session.close()
+
+def update_password(user_id, new_password):
+    """Updates password for a user."""
+    session = SessionLocal()
+    try:
+        user = session.query(User).get(user_id)
+        if user:
+            hashed = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            user.password_hash = hashed
+            session.commit()
+            return True, "Password updated successfully"
+        return False, "User not found"
+    except Exception as e:
+        return False, str(e)
+    finally:
+        session.close()

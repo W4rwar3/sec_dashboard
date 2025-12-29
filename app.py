@@ -4,7 +4,7 @@ import plotly.express as px
 from sqlalchemy.orm import Session
 from database import engine, SessionLocal, init_db, Project, Vulnerability, User, Team, ProjectAccess, UserRole
 from parsers import parse_file
-from auth import check_session, login_user, check_session, logout_user, set_session, create_user
+from auth import check_session, login_user, check_session, logout_user, set_session, create_user, delete_user, update_password
 import datetime
 import os
 
@@ -22,6 +22,17 @@ init_db()
 # --- Theme & Visuals ---
 if 'theme' not in st.session_state:
     st.session_state['theme'] = 'Light'
+
+def mask_email(email):
+    """Masks email for display."""
+    if not email or '@' not in email: return email
+    try:
+        user, domain = email.split('@')
+        if len(user) > 3:
+            return f"{user[:3]}****@{domain}"
+        return f"{user[:1]}****@{domain}"
+    except:
+        return email
 
 def toggle_theme():
     st.session_state['theme'] = 'Light' if st.session_state['theme'] == 'Dark' else 'Dark'
@@ -169,7 +180,7 @@ with st.sidebar:
         session = SessionLocal()
         user_db = session.query(User).get(user_id)
         if user_db and user_db.team:
-             st.caption(f"📍 Team: {user_db.team.name}")
+             st.caption(f"{user_db.team.name}")
         session.close()
     
     # Removed Button here
@@ -203,13 +214,62 @@ if page == "User & Team Management" or page == "Team Management":
     
     # Tabs for Admin actions
     if user_role == 'Admin':
-        tabs = st.tabs(["Create User", "Project Access (Guests)", "Teams"])
+        tabs = st.tabs(["User Management", "Create New User", "Project Access (Guests)", "Teams"])
     else:
         tabs = st.tabs(["Teams"]) # Managers only see Teams
     
-    # Tab 1: Create User (Admin Only)
+    # Tab 0: User Management (List & Actions)
     if user_role == 'Admin':
         with tabs[0]:
+            st.subheader("Manage Users")
+            all_users = session.query(User).all()
+            
+            # Header
+            h1, h2, h3, h4 = st.columns([2, 1, 2, 2])
+            h1.markdown("**User**")
+            h2.markdown("**Role**")
+            h3.markdown("**Email**")
+            h4.markdown("**Actions**")
+            st.divider()
+            
+            for u in all_users:
+                # Skip self
+                if u.id == user_id: continue
+                
+                c1, c2, c3, c4 = st.columns([2, 1, 2, 2])
+                c1.write(f"{u.full_name}")
+                c2.caption(f"{u.role}")
+                c3.write(f"{mask_email(u.email)}")
+                
+                with c4:
+                    with st.expander("Manage"):
+                        # Delete
+                        if u.role in ['Employee', 'Manager', 'Guest']:
+                             if st.button(f"Delete User", key=f"del_usr_{u.id}"):
+                                 # Basic confirmation by UI design usually requires a state or double click, 
+                                 # but for now a button is direct.
+                                 success, msg = delete_user(u.id)
+                                 if success: st.success(msg); st.rerun()
+                                 else: st.error(msg)
+
+                        # Secure Password Reset
+                        with st.form(f"reset_pass_{u.id}"):
+                            st.caption("Secure Password Change")
+                            verify_email = st.text_input("Verify Email (Required)", key=f"v_email_{u.id}")
+                            new_pass = st.text_input("New Password", type="password", key=f"n_pass_{u.id}")
+                            
+                            if st.form_submit_button("Update Password"):
+                                if verify_email == u.email:
+                                    success, msg = update_password(u.id, new_pass)
+                                    if success: st.success(msg)
+                                    else: st.error(msg)
+                                else:
+                                    st.error("Email verification failed! Action Blocked.")
+                st.divider()
+
+    # Tab 1: Create User (Admin Only)
+    if user_role == 'Admin':
+        with tabs[1]:
             st.subheader("Create New User")
             with st.form("create_user_form"):
                 new_email = st.text_input("Email (Optional for Guest)")
@@ -402,56 +462,128 @@ elif page == "Dashboard":
 
             st.markdown("### Executive Summary")
 
-            # --- CSS for colored buttons (Row-Based Heuristic) ---
-            # Targeting the Row (stHorizontalBlock) that has exactly 6 columns.
-            card_css = """
+            # --- KPI SUMMARY (6 Real Security Metrics) ---
+            
+            # 1. Calc Counts
+            total_count = len(df)
+            crit_count = len(df[df['Severity'] == 'Critical'])
+            high_count = len(df[df['Severity'] == 'High'])
+            med_count = len(df[df['Severity'] == 'Medium'])
+            low_count = len(df[df['Severity'] == 'Low'])
+            info_count = len(df[df['Severity'] == 'Informational'])
+
+            # 2. Inject CSS with Unique IDs for Each Card
+            # FIX: Scope styles ONLY to these specific IDs to avoid breaking other buttons
+            st.markdown("""
             <style>
-            /* Critical (2nd Column in 6-col layout) */
-            div[data-testid="stHorizontalBlock"]:has(div[data-testid="column"]:nth-child(6)) > div[data-testid="column"]:nth-child(2) div.stButton > button {
-                background-color: #8B0000 !important; color: white !important; border: none !important;
+            /* Apply BOX Style ONLY to the KPI Buttons */
+            div:has(#kpi-total) + div.stButton > button,
+            div:has(#kpi-critical) + div.stButton > button,
+            div:has(#kpi-high) + div.stButton > button,
+            div:has(#kpi-medium) + div.stButton > button,
+            div:has(#kpi-low) + div.stButton > button ,
+            div:has(#kpi-info) + div.stButton > button {
+                height: 100px;
+                width: 100%;
+                border: none;
+                border-radius: 4px;
+                color: white;
+                font-family: 'Source Sans Pro', sans-serif;
+                font-weight: 700;
+                font-size: 20px;
+                text-align: left;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                align-items: flex-start;
+                padding-left: 20px;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                transition: transform 0.2s;
             }
-            /* High (3rd Column) */
-            div[data-testid="stHorizontalBlock"]:has(div[data-testid="column"]:nth-child(6)) > div[data-testid="column"]:nth-child(3) div.stButton > button {
-                background-color: #FF0000 !important; color: white !important; border: none !important;
+            
+            div:has(#kpi-total) + div.stButton > button:hover,
+            div:has(#kpi-critical) + div.stButton > button:hover,
+            div:has(#kpi-high) + div.stButton > button:hover,
+            div:has(#kpi-medium) + div.stButton > button:hover,
+            div:has(#kpi-low) + div.stButton > button:hover,
+            div:has(#kpi-info) + div.stButton > button:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 6px 10px rgba(0,0,0,0.2);
+                filter: brightness(110%);
+                color: white !important;
             }
-            /* Medium (4th Column) */
-            div[data-testid="stHorizontalBlock"]:has(div[data-testid="column"]:nth-child(6)) > div[data-testid="column"]:nth-child(4) div.stButton > button {
-                background-color: #FFA500 !important; color: black !important; border: none !important;
+
+            /* --- UNIQUE COLOR RULES PER CARD --- */
+            
+            /* 1. TOTAL (Blue) */
+            div:has(#kpi-total) + div.stButton > button {
+                background: linear-gradient(135deg, #00c0ef 0%, #0097bc 100%) !important;
             }
-            /* Low (5th Column) */
-            div[data-testid="stHorizontalBlock"]:has(div[data-testid="column"]:nth-child(6)) > div[data-testid="column"]:nth-child(5) div.stButton > button {
-                background-color: #FFFF00 !important; color: black !important; border: none !important;
+
+            /* 2. CRITICAL (Dark Red - Solid) */
+            div:has(#kpi-critical) + div.stButton > button {
+                background: #8B0000 !important;
+                background-color: #8B0000 !important;
+                background-image: none !important;
+                border: 1px solid #8B0000 !important;
             }
-            /* Info (6th Column) */
-            div[data-testid="stHorizontalBlock"]:has(div[data-testid="column"]:nth-child(6)) > div[data-testid="column"]:nth-child(6) div.stButton > button {
-                background-color: #ADD8E6 !important; color: black !important; border: none !important;
+            div:has(#kpi-critical) + div.stButton > button:hover {
+                background: #600000 !important; /* Even Darker on hover */
+                background-color: #600000 !important;
+                filter: none !important; /* Disable brightness boost */
+                box-shadow: 0 6px 12px rgba(0,0,0,0.3) !important;
             }
-            /* Total (1st Column) */
-             div[data-testid="stHorizontalBlock"]:has(div[data-testid="column"]:nth-child(6)) > div[data-testid="column"]:nth-child(1) div.stButton > button {
-                background-color: #6c757d !important; color: white !important;
-             }
+
+            /* 3. HIGH (Orange) */
+            div:has(#kpi-high) + div.stButton > button {
+                background: linear-gradient(135deg, #f39c12 0%, #c87f0a 100%) !important;
+            }
+
+            /* 4. MEDIUM (Yellow) */
+            div:has(#kpi-medium) + div.stButton > button {
+                 background: linear-gradient(135deg, #ffc107 0%, #dba915 100%) !important;
+                 color: #333 !important; /* Dark text for contrast on yellow */
+            }
+
+            /* 5. LOW (Green) */
+            div:has(#kpi-low) + div.stButton > button {
+                background: linear-gradient(135deg, #00a65a 0%, #008d4c 100%) !important;
+            }
+
+            /* 6. INFO (Teal) */
+            div:has(#kpi-info) + div.stButton > button {
+                background: linear-gradient(135deg, #39cccc 0%, #30bbbb 100%) !important;
+            }
             </style>
-            """
-            st.markdown(card_css, unsafe_allow_html=True)
-            
-            k1, k2, k3, k4, k5, k6 = st.columns(6, gap="small")
-            
-            with k1:
+            """, unsafe_allow_html=True)
+
+            # ROW 1 columns
+            r1_c1, r1_c2, r1_c3 = st.columns(3)
+            with r1_c1:
+                st.markdown('<span id="kpi-total"></span>', unsafe_allow_html=True)
                 if st.button(f"Total\n{total_count}", key="btn_total", use_container_width=True):
                     set_severity('Total')
-            with k2:
+            with r1_c2:
+                st.markdown('<span id="kpi-critical"></span>', unsafe_allow_html=True)
                 if st.button(f"Critical\n{crit_count}", key="btn_crit", use_container_width=True):
                     set_severity('Critical')
-            with k3:
+            with r1_c3:
+                st.markdown('<span id="kpi-high"></span>', unsafe_allow_html=True)
                 if st.button(f"High\n{high_count}", key="btn_high", use_container_width=True):
                     set_severity('High')
-            with k4:
+            
+            # ROW 2 columns
+            r2_c1, r2_c2, r2_c3 = st.columns(3)
+            with r2_c1:
+                st.markdown('<span id="kpi-medium"></span>', unsafe_allow_html=True)
                 if st.button(f"Medium\n{med_count}", key="btn_med", use_container_width=True):
                     set_severity('Medium')
-            with k5:
+            with r2_c2:
+                st.markdown('<span id="kpi-low"></span>', unsafe_allow_html=True)
                 if st.button(f"Low\n{low_count}", key="btn_low", use_container_width=True):
                     set_severity('Low')
-            with k6:
+            with r2_c3:
+                st.markdown('<span id="kpi-info"></span>', unsafe_allow_html=True)
                 if st.button(f"Info\n{info_count}", key="btn_info", use_container_width=True):
                     set_severity('Informational')
 
@@ -471,7 +603,7 @@ elif page == "Dashboard":
                 st.info(f"No findings found for severity: {selected_sev}")
             else:
                 # Charts
-                r2_1, r2_2, r2_3 = st.columns(3)
+                r2_1, r2_2 = st.columns(2)
                 
                 # Helper for Selection
                 def handle_selection(key_name, original_fig):
@@ -491,39 +623,46 @@ elif page == "Dashboard":
                                 if "severity" not in key_name:
                                     st.toast(f"Drill down: {label} (Filtering implemented for Severity only currently)")
                                     
+                # --- CHARTS SECTION (2 Cols per reference) ---
+                # Left: Issue Severity (Pie)
                 with r2_1:
-                    st.subheader("Severity")
+                    st.markdown("##### Issue Severity")
                     try:
                         fig_pie = px.pie(filtered_df, names='Severity', color='Severity', 
-                                         color_discrete_map=REQUIRED_COLORS, hole=0.4)
+                                         color_discrete_map=REQUIRED_COLORS, hole=0.5)
+                        fig_pie.update_layout(showlegend=False, margin=dict(t=20, b=20, l=20, r=20))
                         fig_pie = update_chart_layout(fig_pie)
-                        # Enable Selection
+                        # Center Text
+                        crit_val = len(filtered_df[filtered_df['Severity'] == 'Critical'])
+                        fig_pie.update_layout(annotations=[dict(text=f"Critical<br>{crit_val}", x=0.5, y=0.5, font_size=20, showarrow=False)])
+                        
                         st.plotly_chart(fig_pie, use_container_width=True, key="chart_severity", on_select="rerun", selection_mode="points")
                         handle_selection("chart_severity", fig_pie)
                         figures['Severity Distribution'] = fig_pie
                     except: st.error("Chart Error")
+
+                # Right: Vulnerability Count (Bar)
                 with r2_2:
-                    st.subheader("Categories")
+                    st.markdown("##### Vulnerability Count")
                     try:
-                        cat_counts = filtered_df['Category'].value_counts().reset_index(name='Count')
-                        if 'index' in cat_counts.columns: cat_counts.rename(columns={'index': 'Category'}, inplace=True)
-                        fig_bar = px.bar(cat_counts, x='Category', y='Count', color='Category')
+                        # Group by Severity for Bar Chart (or Category). Reference shows Bar chart.
+                        # Reference: "Vulnerability Count" - Vertical Bars.
+                        # Let's show Severity counts as bars
+                        sev_counts = filtered_df['Severity'].value_counts().reindex(['Critical','High','Medium','Low','Info']).fillna(0).reset_index(name='Count')
+                        if 'index' in sev_counts.columns: sev_counts.rename(columns={'index': 'Severity'}, inplace=True)
+                        
+                        fig_bar = px.bar(sev_counts, x='Severity', y='Count', color='Severity', color_discrete_map=REQUIRED_COLORS)
+                        fig_bar.update_layout(showlegend=False, margin=dict(t=20, b=20, l=20, r=20))
                         fig_bar = update_chart_layout(fig_bar)
-                        st.plotly_chart(fig_bar, use_container_width=True, key="chart_categories", on_select="rerun", selection_mode="points")
-                        handle_selection("chart_categories", fig_bar)
-                        figures['Categories'] = fig_bar
+                        
+                        st.plotly_chart(fig_bar, use_container_width=True, key="chart_vsearch", on_select="rerun", selection_mode="points")
+                        handle_selection("chart_vsearch", fig_bar)
+                        figures['Severity Counts'] = fig_bar
                     except: st.error("Chart Error")
-                with r2_3:
-                    st.subheader("Assets")
-                    try:
-                        loc_counts = filtered_df['File_Location'].value_counts().head(5).reset_index(name='Count')
-                        if 'index' in loc_counts.columns: loc_counts.rename(columns={'index': 'File_Location'}, inplace=True)
-                        fig_area = px.area(loc_counts, x='File_Location', y='Count')
-                        fig_area = update_chart_layout(fig_area)
-                        st.plotly_chart(fig_area, use_container_width=True, key="chart_assets", on_select="rerun", selection_mode="points")
-                        handle_selection("chart_assets", fig_area)
-                        figures['Top Risks'] = fig_area
-                    except: st.error("Chart Error")
+                
+                # (Optional) We can add more rows if needed, but the image focuses on these 2.
+                
+                # --- FINDINGS TABLE ---
 
                 st.divider()
                 st.subheader(f"Analysis Findings ({selected_sev})")
@@ -628,18 +767,19 @@ elif page == "Dashboard":
                      
                      with c_action:
                          # Right aligned actions
+                         # Order: [Delete] [View]
                          ac1, ac2 = st.columns(2)
                          with ac1:
-                             if st.button(f"Load", key=f"load_{p.id}", use_container_width=True):
-                                st.session_state['selected_project_id'] = p.id
-                                st.session_state['current_df'] = pd.DataFrame() 
-                                st.rerun()
-                         with ac2:
                              if user_role == 'Admin':
                                 if st.button("Delete", key=f"del_{p.id}", use_container_width=True):
                                    session.delete(p)
                                    session.commit()
                                    st.rerun()
+                         with ac2:
+                             if st.button(f"View", key=f"load_{p.id}", use_container_width=True):
+                                st.session_state['selected_project_id'] = p.id
+                                st.session_state['current_df'] = pd.DataFrame() 
+                                st.rerun()
                 st.divider()
         else:
              if user_role == 'Guest':
