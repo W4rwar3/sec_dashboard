@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, Text, Enum
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, Text, Enum, Boolean
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from datetime import datetime
 import enum
@@ -18,6 +18,12 @@ class User(Base):
     full_name = Column(String)
     avatar_url = Column(String)
     role = Column(String, default="Employee")
+    
+    # Security Fields
+    failed_login_attempts = Column(Integer, default=0)
+    lockout_until = Column(DateTime, nullable=True)
+    must_change_password = Column(Boolean, default=True) # Force change on first login
+    
     team_id = Column(Integer, ForeignKey('teams.id'))
 
     # Relationships
@@ -41,6 +47,7 @@ class Project(Base):
     project_name = Column(String, nullable=False)
     created_date = Column(DateTime, default=datetime.utcnow)
     total_vulns = Column(Integer, default=0)
+    is_draft = Column(Boolean, default=False) # New Draft Logic
     owner_id = Column(Integer, ForeignKey('users.id'))
 
     owner = relationship("User", back_populates="projects_owned")
