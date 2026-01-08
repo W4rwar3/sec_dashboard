@@ -495,15 +495,15 @@ elif page == "Dashboard":
                 font-family: 'Source Sans Pro', sans-serif;
                 font-weight: 600;
                 font-size: 18px;
-                text-align: left;
+                text-align: center;
                 white-space: pre-wrap !important; /* Force Newlines */
                 line-height: 1.4 !important;
                 
                 display: flex;
                 flex-direction: column;
                 justify-content: center;
-                align-items: flex-start;
-                padding-left: 24px;
+                align-items: center;
+                padding-left: 0px;
                 
                 box-shadow: 0 4px 6px rgba(0,0,0,0.05);
                 transition: all 0.3s ease;
@@ -535,30 +535,30 @@ elif page == "Dashboard":
             r1_c1, r1_c2, r1_c3 = st.columns(3)
             with r1_c1:
                 st.markdown('<span id="kpi-total"></span>', unsafe_allow_html=True)
-                if st.button(f"Total\n{total_count}\nissues", key="btn_total", use_container_width=True):
+                if st.button(f"**Total**\n{total_count}\n", key="btn_total", use_container_width=True):
                     set_severity('Total')
             with r1_c2:
                 st.markdown('<span id="kpi-critical"></span>', unsafe_allow_html=True)
-                if st.button(f"Critical\n{crit_count}\nissues", key="btn_crit", use_container_width=True):
+                if st.button(f"**Critical**\n{crit_count}\n", key="btn_crit", use_container_width=True):
                     set_severity('Critical')
             with r1_c3:
                 st.markdown('<span id="kpi-high"></span>', unsafe_allow_html=True)
-                if st.button(f"High\n{high_count}\nissues", key="btn_high", use_container_width=True):
+                if st.button(f"**High**\n{high_count}\n", key="btn_high", use_container_width=True):
                     set_severity('High')
             
             # ROW 2 columns
             r2_c1, r2_c2, r2_c3 = st.columns(3)
             with r2_c1:
                 st.markdown('<span id="kpi-medium"></span>', unsafe_allow_html=True)
-                if st.button(f"Medium\n{med_count}\nissues", key="btn_med", use_container_width=True):
+                if st.button(f"**Medium** \n{med_count}\n", key="btn_med", use_container_width=True):
                     set_severity('Medium')
             with r2_c2:
                 st.markdown('<span id="kpi-low"></span>', unsafe_allow_html=True)
-                if st.button(f"Low\n{low_count}\nissues", key="btn_low", use_container_width=True):
+                if st.button(f"**Low**\n {low_count}", key="btn_low", use_container_width=True):
                     set_severity('Low')
             with r2_c3:
                 st.markdown('<span id="kpi-info"></span>', unsafe_allow_html=True)
-                if st.button(f"Info\n{info_count}\nissues", key="btn_info", use_container_width=True):
+                if st.button(f"**Info**\n{info_count}\n", key="btn_info", use_container_width=True):
                     set_severity('Informational')
 
             st.caption(f"Currently Showing: **{st.session_state['selected_severity']}** Findings")
@@ -853,8 +853,9 @@ elif page == "Dashboard":
                          
                          # 1. Rename
                          with ac1:
-                            if st.button("✏️", key=f"ren_btn_{p.id}", help="Rename Project"):
-                                st.session_state[f'rename_mode_{p.id}'] = True
+                            if user_role != 'Guest':
+                                if st.button("✏️", key=f"ren_btn_{p.id}", help="Rename Project"):
+                                    st.session_state[f'rename_mode_{p.id}'] = True
                          
                          # 2. Delete (Admin Only) -> NO, Request says: Admin, Manager, Employee. Guest NO.
                          # Guest logic is handled by 'user_role' check. 
